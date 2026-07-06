@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArchLens - Interactive Repository Map</title>
+    <!-- Tailwind CSS for modern styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vis-Network for interactive graph visualization -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        #network-container {
+            height: 600px;
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="bg-white border-b border-slate-200 py-4 px-6 shadow-sm">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <div class="bg-indigo-600 text-white p-2 rounded-lg">
+                    <i class="fa-solid fa-diagram-project text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight text-slate-900">ArchLens</h1>
+                    <p class="text-xs text-slate-500">Static System Architecture Explorer</p>
+                </div>
+            </div>
+            <div class="text-xs text-slate-400">
+                Powered by GitHub API
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow max-w-7xl w-full mx-auto px-6 py-8 flex flex-col md:flex-row gap-8">
+        
+        <!-- Left Column: Controls & Details -->
+        <div class="w-full md:w-1/3 flex flex-col gap-6">
+            
+            <!-- Repo Input Box -->
+            <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <i class="fa-solid fa-search text-indigo-500"></i> Analyze Repository
+                </h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-medium text-slate-500 mb-1">GitHub Repo URL or "owner/repo"</label>
+                        <input id="repo-input" type="text" placeholder="e.g., facebook/react or hexojs/hexo" 
+                               class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-xs font-medium text-slate-500 mb-1 flex justify-between">
+                            <span>GitHub Token (Optional)</span>
+                            <span class="text-slate-400 italic">Avoids rate limits</span>
+                        </label>
+                        <input id="token-input" type="password" placeholder="ghp_..." 
+                               class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+
+                    <button id="analyze-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg transition duration-200 text-sm flex items-center justify-center gap-2">
+                        <span>Analyze Architecture</span>
+                        <i class="fa-solid fa-arrow-right"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Details Panel -->
+            <div id="details-panel" class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex-grow">
+                <h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+                    <i class="fa-solid fa-circle-info text-indigo-500"></i> Component Details
+                </h2>
+                <div id="details-content" class="text-sm text-slate-500 space-y-3">
+                    <p>Select a node in the diagram to view identified directories, inferred technology stack, and mapped file structure.</p>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Right Column: Interactive Map -->
+        <div class="w-full md:w-2/3 flex flex-col gap-4">
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex-grow flex flex-col">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 id="map-title" class="font-semibold text-slate-700">System Diagram</h3>
+                    <div id="legend" class="flex gap-4 text-xs">
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-500 inline-block"></span> Frontend</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-emerald-500 inline-block"></span> Backend</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-amber-500 inline-block"></span> Database</span>
+                        <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-slate-400 inline-block"></span> Module</span>
+                    </div>
+                </div>
+                
+                <!-- Loading State overlay -->
+                <div id="loading" class="hidden flex-col items-center justify-center h-[500px] text-slate-500">
+                    <i class="fa-solid fa-spinner fa-spin text-3xl text-indigo-600 mb-2"></i>
+                    <p>Querying GitHub file trees and analyzing structure...</p>
+                </div>
+
+                <!-- Network Container -->
+                <div id="network-container" class="relative">
+                    <div id="network" class="w-full h-full"></div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400 mt-auto">
+        <p>ArchLens uses basic directory structures and naming heuristics to map components. Best suited for organized multi-folder architectures.</p>
+    </footer>
+
+    <!-- App JavaScript Logic -->
+    <script>
+        const repoInput = document.getElementById('repo-input');
+        const tokenInput = document.getElementById('token-input');
+        const analyzeBtn = document.getElementById('analyze-btn');
+        const loading = document.getElementById('loading');
+        const networkContainer = document.getElementById('network-container');
+        const detailsContent = document.getElementById('details-content');
+        const mapTitle = document.getElementById('map-title');
+
+        let network = null;
+
+        analyzeBtn.addEventListener('click', startAnalysis);
+
+        async function startAnalysis() {
+            let input = repoInput.value.trim();
+            // Clean up URLs to extract owner/repo
+            input = input.replace(/https?:\/\/github\.com\//, '');
+            const parts = input.split('/');
+            if (parts.length < 2) {
+                alert('Please enter a valid "owner/repo" path.');
+                return;
+            }
+            const owner = parts[0];
+            const repo = parts[1];
+
+            toggleLoading(true);
+
+            try {
+                const headers = {};
+                if (tokenInput.value.trim()) {
+                    headers['Authorization'] = `token ${tokenInput.value.trim()}`;
+                }
+
+                // 1. Get the default branch
+                const repoResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+                if (!repoResponse.ok) throw new Error('Repository not found or API limit reached.');
+                const repoData = await repoResponse.json();
+                const defaultBranch = repoData.default_branch;
+
+                // 2. Fetch recursive git tree
+                const treeResponse = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`, { headers });
+                if (!treeResponse.ok) throw new Error('Failed to retrieve project file tree.');
+                const treeData = await treeResponse.json();
+
+                mapTitle.textContent = `System Diagram: ${owner}/${repo}`;
+                processAndRender(treeData.tree);
+            } catch (err) {
+                alert(err.message);
+            } finally {
+                toggleLoading(false);
+            }
+        }
+
+        function toggleLoading(isLoading) {
+            if (isLoading) {
+                loading.classList.remove('hidden');
+                loading.classList.add('flex');
+                networkContainer.classList.add('hidden');
+            } else {
+                loading.classList.add('hidden');
+                loading.classList.remove('flex');
+                networkContainer.classList.remove('hidden');
+            }
+        }
+
+        // Heuristic analysis of the codebase structural data
+        function processAndRender(tree) {
+            const nodesMap = new Map();
+            const edges = [];
+
+            // 1. Map paths to extract directories
+            tree.forEach(item => {
+                const pathParts = item.path.split('/');
+                const topDir = pathParts[0];
+
+                if (item.type === 'tree') {
+                    // Only focus on high-level logical directories to keep diagram simple
+                    if (pathParts.length <= 2) {
+                        nodesMap.set(item.path, {
+                            id: item.path,
+                            label: item.path,
+                            type: 'directory',
+                            files: [],
+                            tech: []
+                        });
+                    }
+                } else if (item.type === 'blob') {
+                    const fileName = pathParts[pathParts.length - 1];
+                    const extension = fileName.split('.').pop().toLowerCase();
+
+                    // If file resides in a known top-level directory, aggregate it
+                    if (nodesMap.has(topDir)) {
+                        const dirNode = nodesMap.get(topDir);
+                        dirNode.files.push(item.path);
+                        const detectedTech = detectTechnology(extension, fileName);
+                        if (detectedTech && !dirNode.tech.includes(detectedTech)) {
+                            dirNode.tech.push(detectedTech);
+                        }
+                    } else if (pathParts.length === 1) {
+                        // Key root config files get their own indicator
+                        if (['package.json', 'docker-compose.yml', 'requirements.txt', 'go.mod', 'cargo.toml'].includes(fileName.toLowerCase())) {
+                            nodesMap.set(fileName, {
+                                id: fileName,
+                                label: fileName,
+                                type: 'config',
+                                files: [item.path],
+                                tech: [detectTechnology(extension, fileName)]
+                            });
+                        }
+                    }
+                }
+            });
+
+            // 2. Categorize components by naming patterns and detected technology
+            const nodesArray = [];
+            nodesMap.forEach((node, key) => {
+                let color = '#94a3b8'; // default gray
+                let shape = 'box';
+                let icon = 'fa-folder';
+                let classification = 'Module';
+
+                const lowerKey = key.toLowerCase();
+
+                if (node.type === 'config') {
+                    color = '#ec4899';
+                    shape = 'ellipse';
+                    icon = 'fa-gears';
+                    classification = 'Configuration';
+                } else if (lowerKey.includes('db') || lowerKey.includes('database') || lowerKey.includes('model') || lowerKey.includes('sql') || node.tech.includes('SQL')) {
+                    color = '#f59e0b'; // Amber
+                    shape = 'database';
+                    icon = 'fa-database';
+                    classification = 'Database component';
+                } else if (lowerKey.includes('api') || lowerKey.includes('server') || lowerKey.includes('backend') || lowerKey.includes('controller') || lowerKey.includes('routes')) {
+                    color = '#10b981'; // Emerald
+                    shape = 'box';
+                    icon = 'fa-server';
+                    classification = 'Backend Service';
+                } else if (lowerKey.includes('client') || lowerKey.includes('frontend') || lowerKey.includes('web') || lowerKey.includes('ui') || lowerKey.includes('view') || node.tech.includes('React') || node.tech.includes('HTML')) {
+                    color = '#3b82f6'; // Blue
+                    shape = 'ellipse';
+                    icon = 'fa-laptop-code';
+                    classification = 'Frontend App';
+                }
+
+                nodesArray.push({
+                    id: node.id,
+                    label: node.id,
+                    color: { background: color, border: '#1e293b', highlight: { background: '#818cf8', border: '#4f46e5' } },
+                    font: { color: '#0f172a', size: 14, face: 'monospace' },
+                    shape: shape,
+                    margin: 10,
+                    // Store internal metadata
+                    metadata: {
+                        classification,
+                        tech: node.tech,
+                        filesCount: node.files.length,
+                        filesList: node.files.slice(0, 10) // store up to 10 sample files
+                    }
+                });
+            });
+
+            // 3. Heuristic connections between components
+            nodesArray.forEach(source => {
+                nodesArray.forEach(target => {
+                    if (source.id === target.id) return;
+
+                    const srcClass = source.metadata.classification;
+                    const tgtClass = target.metadata.classification;
+
+                    // Frontend communicates with backend services
+                    if (srcClass === 'Frontend App' && tgtClass === 'Backend Service') {
+                        edges.push({ from: source.id, to: target.id, label: 'API Calls', arrows: 'to', color: { color: '#cbd5e1' } });
+                    }
+                    // Backend queries database
+                    if (srcClass === 'Backend Service' && tgtClass === 'Database component') {
+                        edges.push({ from: source.id, to: target.id, label: 'Queries', arrows: 'to', color: { color: '#cbd5e1' } });
+                    }
+                    // Configuration links to logical modules
+                    if (srcClass === 'Configuration' && (tgtClass === 'Backend Service' || tgtClass === 'Database component')) {
+                        edges.push({ from: source.id, to: target.id, style: 'dash', color: { color: '#e2e8f0' } });
+                    }
+                });
+            });
+
+            renderNetwork(nodesArray, edges);
+        }
+
+        function detectTechnology(ext, name) {
+            if (ext === 'py') return 'Python';
+            if (ext === 'js' || ext === 'jsx') return 'JavaScript/React';
+            if (ext === 'ts' || ext === 'tsx') return 'TypeScript';
+            if (ext === 'sql' || ext === 'prisma') return 'SQL';
+            if (ext === 'go') return 'Go';
+            if (ext === 'rs') return 'Rust';
+            if (ext === 'java') return 'Java';
+            if (ext === 'rb') return 'Ruby';
+            if (name === 'Dockerfile') return 'Docker';
+            return null;
+        }
+
+        // Render the physical graph via vis.js
+        function renderNetwork(nodes, edges) {
+            const container = document.getElementById('network');
+            const data = {
+                nodes: new vis.DataSet(nodes),
+                edges: new vis.DataSet(edges)
+            };
+            const options = {
+                physics: {
+                    barnesHut: {
+                        gravitationalConstant: -3000,
+                        springLength: 150
+                    }
+                },
+                edges: {
+                    smooth: {
+                        type: 'cubicBezier',
+                        forceDirection: 'none',
+                        roundness: 0.5
+                    }
+                }
+            };
+
+            network = new vis.Network(container, data, options);
+
+            // Handle interactions (Node Selection)
+            network.on("selectNode", function (params) {
+                const selectedId = params.nodes[0];
+                const nodeData = nodes.find(n => n.id === selectedId);
+                
+                if (nodeData && nodeData.metadata) {
+                    const m = nodeData.metadata;
+                    let techList = m.tech.filter(Boolean).join(', ') || 'None identified';
+                    let filesPreview = m.filesList.map(f => `<li class="truncate text-xs font-mono bg-slate-100 p-1 rounded">${f}</li>`).join('');
+                    
+                    detailsContent.innerHTML = `
+                        <div>
+                            <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">${m.classification}</span>
+                        </div>
+                        <p class="text-lg font-bold text-slate-800">${nodeData.id}</p>
+                        <div>
+                            <span class="block text-xs text-slate-400 font-medium">Technologies:</span>
+                            <span class="text-sm text-slate-700">${techList}</span>
+                        </div>
+                        <div>
+                            <span class="block text-xs text-slate-400 font-medium">Structure (${m.filesCount} files):</span>
+                            <ul class="space-y-1 mt-2">
+                                ${filesPreview || '<li class="text-xs italic text-slate-400">No source files grouped directly</li>'}
+                                ${m.filesCount > 10 ? '<li class="text-xs text-slate-400 italic">...and more files</li>' : ''}
+                            </ul>
+                        </div>
+                    `;
+                }
+            });
+
+            // Clear details when deselecting
+            network.on("deselectNode", function () {
+                detailsContent.innerHTML = `<p>Select a node in the diagram to view identified directories, inferred technology stack, and mapped file structure.</p>`;
+            });
+        }
+    </script>
+</body>
+</html>
